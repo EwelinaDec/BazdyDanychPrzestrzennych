@@ -1,0 +1,76 @@
+CREATE DATABASE cw3;
+CREATE EXTENSION postgis;
+
+--1
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2018\T2018_KAR_BUILDINGS.shp" public.buildings_2018 | psql -h localhost -p 5432 -U postgres -d cw3
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_BUILDINGS.shp" public.buildings_2019 | psql -h localhost -p 5432 -U postgres -d cw3
+
+CREATE TABLE wyremontowane_budynki AS
+SELECT b19.*
+FROM buildings_2019 AS b19
+LEFT JOIN buildings_2018 AS b18 ON ST_Within(b19.geom, b18.geom)
+WHERE b18.geom IS NULL;
+
+--2
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2018\T2018_KAR_POI_TABLE.shp" public.poi_2018 | psql -h localhost -p 5432 -U postgres -d cw3
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_POI_TABLE.shp" public.poi_2019 | psql -h localhost -p 5432 -U postgres -d cw3
+
+SELECT poi_2019.type, COUNT(poi_2019.*) AS poi_count
+FROM poi_2019
+JOIN wyremontowane_budynki AS wb ON ST_Within(poi_2019.geom, ST_Buffer(wb.geom, 500))
+LEFT JOIN poi_2018 ON poi_2019.geom = poi_2018.geom
+WHERE poi_2018.geom IS NULL
+GROUP BY poi_2019.type;
+
+
+--3
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_STREETS.shp" public.t2019_kar_streets | psql -h localhost -p 5432 -U postgres -d cw3
+
+CREATE TABLE streets_reprojected AS
+SELECT gid, link_id, st_name, ref_in_id, nref_in_id, func_class, speed_cat, fr_speed_l,
+	to_speed_l, dir_travel, ST_Transform(geom, 3068) AS geom
+FROM T2019_KAR_STREETS;
+
+--4
+CREATE TABLE input_points(id INTEGER, geom GEOMETRY);
+
+INSERT INTO input_points(id, geom) 
+	VALUES ( 1, ST_GeomFromText('POINT(8.36093 49.03174)', 4326) );
+INSERT INTO input_points(id, geom) 
+	VALUES ( 2, ST_GeomFromText('POINT(8.39876 49.00644)', 4326) );
+
+--5
+UPDATE input_points
+SET geom = ST_Transform(geom, 4314);
+
+--6
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_STREET_NODE.shp" public.t2019_kar_street_node | psql -h localhost -p 5432 -U postgres -d cw3
+
+SELECT node.*
+FROM T2019_KAR_STREET_NODE AS node
+JOIN (
+    SELECT ST_MakeLine(geom ORDER BY id) AS geom
+    FROM input_points
+) AS line ON ST_DWithin(ST_Transform(node.geom, 4314), line.geom, 200);
+
+--7
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_LAND_USE_A.shp" public.t2019_kar_land_use_a | psql -h localhost -p 5432 -U postgres -d cw3
+
+SELECT COUNT(poi.*)
+FROM (SELECT geom FROM poi_2019 WHERE type = 'Sporting Goods Store') AS poi,
+	 (SELECT geom FROM t2019_kar_land_use_a WHERE type = 'Park (City/County)') AS park
+WHERE ST_DWithin(poi.geom, park.geom, 300);
+
+--8
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_RAILWAYS.shp" public.railways | psql -h localhost -p 5432 -U postgres -d cw3
+shp2pgsql -s 3068 -I "C:\Users\eweli\Studia\BazyDanychPrzestrzennych\cw3\T2019\T2019_KAR_WATER_LINES.shp" public.water_lines | psql -h localhost -p 5432 -U postgres -d cw3
+
+CREATE TABLE T2019_KAR_BRIDGES AS
+SELECT ST_Intersection(r.geom, w.geom) AS geom
+FROM RAILWAYS AS r
+JOIN WATER_LINES AS w ON ST_Intersects(r.geom, w.geom);
+
+
+
+
+
